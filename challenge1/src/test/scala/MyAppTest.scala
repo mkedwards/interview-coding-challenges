@@ -53,7 +53,7 @@ class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
 
     val df_ratings = df_ratings_raw
       .repartition(200, col("movie_id"))
-      .sort(col("movie_id"), col("user_id"), col("ts").desc)
+      .sortWithinPartitions(col("movie_id"), col("user_id"), col("ts").desc)
       .dropDuplicates("movie_id", "user_id")
 
     val df_ratings_avg = df_ratings
@@ -78,5 +78,10 @@ class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
 
     df_ratings_raw.filter(col("user_id") === 207971).orderBy(col("movie_id"), col("ts")).show(truncate = false)
     df_ratings.filter(col("user_id") === 207971).orderBy(col("movie_id"), col("ts")).show(truncate = false)
+
+    df_ratings_joined.createOrReplaceTempView("df_ratings_joined")
+    val like_sql = spark.sql("SELECT * FROM df_ratings_joined WHERE lower(movie_title) LIKE 'say anything%'")
+    like_sql.explain
+    like_sql.show(truncate = false)
   }
 }
