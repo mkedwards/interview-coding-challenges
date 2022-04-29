@@ -82,8 +82,13 @@ class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
     df_ratings.filter(col("user_id") === 207971).orderBy(col("movie_id"), col("ts")).show(truncate = false)
 
     df_ratings_joined.createOrReplaceTempView("df_ratings_joined")
-    val like_sql = spark.sql("SELECT /*+ COALESCE(1) */ * FROM df_ratings_joined WHERE avg_movie_rating >= 3.5 AND number_of_votes >= 3 AND lower(movie_title) LIKE 's%' ORDER BY avg_movie_rating DESC")
-    like_sql.explain
-    like_sql.show(truncate = false)
+    val like_sql = "SELECT /*+ COALESCE(1) */ * FROM df_ratings_joined WHERE avg_movie_rating >= 3.5 AND number_of_votes >= 3 AND lower(movie_title) LIKE 's%' ORDER BY avg_movie_rating DESC"
+    val like_query = spark.sql(like_sql)
+
+    printf("\n")
+    printf("%s\n", like_sql)
+    printf("\n")
+    like_query.explain
+    like_query.show(truncate = false)
   }
 }
