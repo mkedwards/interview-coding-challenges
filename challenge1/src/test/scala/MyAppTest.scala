@@ -1,6 +1,7 @@
 import org.scalatest.flatspec.AnyFlatSpec
 
 import org.apache.spark.sql.functions._
+import org.apache.spark.storage.StorageLevel
 
 class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
 
@@ -36,6 +37,7 @@ class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
     val df_movies_metadata  = readCSV(s"${basePath}/movies_metadata/movies_metadata.csv.gz")
     val renamedColumns = df_movies_metadata.columns.map(c => df_movies_metadata(c).as("movie_" + c))
     val df_movie_lookup = df_movies_metadata.select(renamedColumns: _*)
+      .persist(StorageLevel.MEMORY_AND_DISK_2)
 
     import org.apache.spark.sql.types._
     val ratingsSchema = StructType(
@@ -45,7 +47,6 @@ class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
         StructField("ts", LongType, nullable = true) :: Nil)
 
     val df_ratings_raw = spark.read
-      .format("csv")
       .option("header", false)
       .schema(schema = ratingsSchema)
       .csv(s"${basePath}/ratings/*/*")
@@ -59,8 +60,9 @@ class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
     val df_ratings_avg = df_ratings
       .groupBy("movie_id")
       .agg(avg("rating").as("avg_movie_rating"), count("*").as("number_of_votes"))
+      .persist(StorageLevel.DISK_ONLY_2)
 
-    val df_ratings_joined = df_ratings_avg.join(df_movie_lookup, df_ratings_avg("movie_id") === df_movie_lookup("movie_id"), "leftouter")
+    val df_ratings_joined = df_ratings_avg.join(broadcast(df_movie_lookup), df_ratings_avg("movie_id") === df_movie_lookup("movie_id"), "leftouter")
                                           .select(df_ratings_avg("movie_id"),
                                                   df_movie_lookup("movie_title"),
                                                   df_movie_lookup("movie_runtime"),
@@ -80,7 +82,7 @@ class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
     df_ratings.filter(col("user_id") === 207971).orderBy(col("movie_id"), col("ts")).show(truncate = false)
 
     df_ratings_joined.createOrReplaceTempView("df_ratings_joined")
-    val like_sql = spark.sql("SELECT * FROM df_ratings_joined WHERE lower(movie_title) LIKE 'say anything%'")
+    val like_sql = spark.sql("SELECT /*+ COALESCE(1) */ * FROM df_ratings_joined WHERE avg_movie_rating >= 3.5 AND number_of_votes >= 3 AND lower(movie_title) LIKE 's%' ORDER BY avg_movie_rating DESC")
     like_sql.explain
     like_sql.show(truncate = false)
   }
