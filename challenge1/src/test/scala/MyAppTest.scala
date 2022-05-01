@@ -95,7 +95,7 @@ class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
   }
 
   it should "query against the global temp view" in {
-    SparkFactory.initDailyRatings()
+    SparkFactory.loadDailyRatings(".*".r)
     SparkFactory.updateRatingsGlobalTempView("movies_metadata")
 
     val like_sql = "SELECT /*+ COALESCE(1) */ * FROM global_temp.ratings WHERE avg_movie_rating >= 3.5 AND number_of_votes >= 3 AND lower(movie_title) LIKE 's%' ORDER BY avg_movie_rating DESC"

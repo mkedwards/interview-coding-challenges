@@ -7,7 +7,7 @@ import org.apache.spark.sql.types._
 
 object MyApp {
   def main(args:Array[String]) = {
-    SparkFactory.initDailyRatings()
+    SparkFactory.loadDailyRatings(".*".r)
     SparkFactory.updateRatingsGlobalTempView("movies_metadata")
 
     val spark = SparkSession.builder

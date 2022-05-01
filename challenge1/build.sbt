@@ -16,6 +16,8 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
   "org.apache.spark" %% "spark-sql" % sparkVersion  % "provided",
 
+  "org.typelevel" %% "cats-effect" % "3.3.11",
+
   "com.typesafe.play" % "play-json_2.12" % "2.8.2" % "test",
   // test dependencies
   "com.holdenkarau" %% "spark-testing-base" % "3.2.0_1.1.1" % "test" exclude ("com.fasterxml.jackson.core","jackson-annotations")
