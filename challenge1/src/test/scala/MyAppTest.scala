@@ -1,5 +1,7 @@
 import org.scalatest.flatspec.AnyFlatSpec
 
+import com.ma.analytics.SparkFactory
+
 import org.apache.spark.sql.functions._
 import org.apache.spark.storage.StorageLevel
 
@@ -37,7 +39,7 @@ class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
     val df_movies_metadata  = readCSV(s"${basePath}/movies_metadata/movies_metadata.csv.gz")
     val renamedColumns = df_movies_metadata.columns.map(c => df_movies_metadata(c).as("movie_" + c))
     val df_movie_lookup = df_movies_metadata.select(renamedColumns: _*)
-      .persist(StorageLevel.MEMORY_AND_DISK_2)
+      .persist(StorageLevel.MEMORY_AND_DISK)
 
     import org.apache.spark.sql.types._
     val ratingsSchema = StructType(
@@ -50,7 +52,7 @@ class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
       .option("header", false)
       .schema(schema = ratingsSchema)
       .csv(s"${basePath}/ratings/*/*")
-      .filter(col("user_id").isNotNull && col("movie_id").isNotNull && col("rating").isNotNull && col("ts").isNotNull)
+      .filter(col("rating").isNotNull && col("ts").isNotNull)
 
     val df_ratings = df_ratings_raw
       .repartition(200, col("movie_id"))
@@ -60,7 +62,7 @@ class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
     val df_ratings_avg = df_ratings
       .groupBy("movie_id")
       .agg(avg("rating").as("avg_movie_rating"), count("*").as("number_of_votes"))
-      .persist(StorageLevel.DISK_ONLY_2)
+      .persist(StorageLevel.DISK_ONLY)
 
     val df_ratings_joined = df_ratings_avg.join(broadcast(df_movie_lookup), df_ratings_avg("movie_id") === df_movie_lookup("movie_id"), "leftouter")
                                           .select(df_ratings_avg("movie_id"),
@@ -86,6 +88,19 @@ class MyAppTest extends AnyFlatSpec with MASharedSparkContext  {
     val like_query = spark.sql(like_sql)
 
     printf("\n")
+    printf("%s\n", like_sql)
+    printf("\n")
+    like_query.explain
+    like_query.show(truncate = false)
+  }
+
+  it should "query against the global temp view" in {
+    SparkFactory.initDailyRatings()
+    SparkFactory.updateRatingsGlobalTempView("movies_metadata")
+
+    val like_sql = "SELECT /*+ COALESCE(1) */ * FROM global_temp.ratings WHERE avg_movie_rating >= 3.5 AND number_of_votes >= 3 AND lower(movie_title) LIKE 's%' ORDER BY avg_movie_rating DESC"
+    val like_query = spark.sql(like_sql)
+
     printf("%s\n", like_sql)
     printf("\n")
     like_query.explain
