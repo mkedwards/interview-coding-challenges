@@ -17,6 +17,9 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion  % "provided",
 
   "org.typelevel" %% "cats-effect" % "3.3.11",
+  "com.typesafe.akka" %% "akka-actor-typed" % "2.6.19",
+  "com.typesafe.akka" %% "akka-stream" % "2.6.19",
+  "com.typesafe.akka" %% "akka-http" % "10.2.9",
 
   "com.typesafe.play" % "play-json_2.12" % "2.8.2" % "test",
   // test dependencies
