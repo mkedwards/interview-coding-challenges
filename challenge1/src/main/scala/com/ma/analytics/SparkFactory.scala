@@ -242,7 +242,14 @@ object SparkFactory {
     } yield m.values
     val rdds = rddsEffect.unsafeRunSync()
 
-    val avgRatingsRDD = rdds.reduce(_.union(_))
+    // The logic of using reduceRight here is that the oldest daily ratings RDDs are least likely to have been replaced by a call
+    // to loadDailyRatings(), and therefore most likely to be cached at the ShuffledRDD, or perhaps even PartitionerAwareUnionRDD,
+    // level.  Testing suggests that the PartitionerAwareUnionRDD is not quite smart enough to reuse cached results, even when
+    // hinted at with calls to persist(), so we'll leave this as a possible opportunity for later optimization.  (One might pursue
+    // a sorted on-disk / in-memory representation in which runs of rows with the same IdTuple key are efficiently stored and merged,
+    // maybe even with sorting and delta-encoding of the timestamp field of the value?  But this is my Interana experience speaking....)
+    //
+    val avgRatingsRDD = rdds.reduceRight(_.union(_))
       //
       // Note that we enforce exact associativity/commutativity by using the implicit Ordering defined on TimestampedRating above,
       // in which the value of the rating is used as a tiebreaker for equal timestamps.
