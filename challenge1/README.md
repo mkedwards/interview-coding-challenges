@@ -6,11 +6,16 @@ The implementation more or less meets specification, though it is not production
 and data resources embedded in the assembly JAR) and doesn't have detailed tests.  There are a few test cases that show stages of implementation,
 but they simply dump output to the console for inspection rather than verifying specific average ratings values.
 
+NOTE that the test data itself has been tweaked to exercise cases where a rating is clobbered by a rating with a later timestamp!  If you look
+carefully at the test output, you will see that different average ratings are reported for "Say Anything..." in test cases where the third daily
+CSV has and hasn't been ingested.  Check the final test case in `src/test/scala/MyAppTest.scala`, and observe that `SparkFactory.loadDailyRatings()`
+takes a regular expression parameter to specify which daily data sets it should load.
+
 There is one notable deviation from the intermediate discussion with Wesley; the implementation disallows nulls in all columns of the daily CSVs.
 As noted in comments in the code, allowing nulls in ratings would not be particularly useful (when would a null movie ID or user ID be valid, let
 alone a null timestamp or rating?), and would cost performance and code complexity in the inner loop of conversion from DataFrame to pair RDD.
 
-There are extensive comments in com.ma.analytics.SparkFactory describing the implementation strategy, including the use of RDD-level APIs to
+There are extensive comments in `com.ma.analytics.SparkFactory` describing the implementation strategy, including the use of RDD-level APIs to
 accomplish the union/reduce/aggregate sequence without needless shuffle/repartition stages.  It's not *pretty* code, but it seems to get the job
 done.  In addition to the test cases (which can be run as usual via `sbt test`), there is a sample application which can be rolled up along with
 the test data via `sbt assembly` and run on a local Spark master.  The incantation for launching it (assuming that you have a Spark master at
