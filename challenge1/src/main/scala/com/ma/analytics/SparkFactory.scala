@@ -253,12 +253,13 @@ object SparkFactory {
       //
       .mapPartitions(extractRating, preservesPartitioning = true)
       //
-      // TODO it's kind of ugly for the seqOp and combOp functions to be open-coded here; they should probably be refactored into
-      //      implicits on the TotalRatings case class
+      // TODO It's kind of ugly for the seqOp and combOp functions to be open-coded here; they should probably be refactored into
+      //      implicits on the TotalRatings case class.  Then again, making Numeric implicits work on a case class seems to be
+      //      impossibly fiddly, so maybe we'll stick with the open-coded version.
       //
-      .aggregateByKey(new TotalRatings(0.0, 0))(
-        (tr, rating) => new TotalRatings(tr.total + rating, tr.count + 1),
-        (tr1, tr2) => new TotalRatings(tr1.total + tr2.total, tr1.count + tr2.count)
+      .aggregateByKey(TotalRatings(0.0, 0))(
+        (tr, rating) => TotalRatings(tr.total + rating, tr.count + 1),
+        (tr1, tr2) => TotalRatings(tr1.total + tr2.total, tr1.count + tr2.count)
       )
       //
       // We set preservesPartitioning = true here, but it doesn't really matter because a RDD[Row] is not a paired RDD.
