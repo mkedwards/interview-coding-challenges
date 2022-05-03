@@ -1,3 +1,95 @@
+MKE response to Challenge 2
+======================
+
+I just set up the query in the test case.  This is the core logic I wound up with, after some experimentation:
+
+```
+    val df_cast = df_credits
+        .join(df_movies, df_credits("movie_id") === df_movies("id"), "leftouter")
+        .withColumn("cast_member", explode(from_json(col("cast"), castSchema)).as("cast_member"))
+        .select(df_credits("movie_id"), df_credits("title"), col("budget"), col("cast_member.*"))
+        .repartition(200, col("id"))
+        .sortWithinPartitions(col("id"), col("movie_id"), col("order"))
+        .dropDuplicates("id", "movie_id")
+        .filter(col("budget") > 999 && col("order") < 5)
+
+    val df_avg_budget = df_cast.groupBy("id")
+        .agg(first("name").as("a_name"), avg("budget").as("avg_budget"), count("movie_id").as("movie_count"), max("gender").as("max_gender"))
+        .filter(col("movie_count") >= 5)
+        .orderBy(col("avg_budget").desc)
+```
+
+The `dropDuplicates("id", "movie_id")` step ensures that each actor is credited no more than once for a given film, retaining the credit with
+highest billing (lowest value of `order`, which starts at 0).
+
+The `col("budget") > 999 && col("order") < 5` filter drops films with unrecorded/corrupted budgets (what film has a budget of $7?) and
+cast members with low billing (arbitrarily retaining only the top 5 actors per film).  Without the latter filter, most of the "top ranked"
+actors seem to be stunt persons, character actors, and so forth, which are fine careers but probably not what the query is intended for.
+
+The `max("gender").as("max_gender")` column is intended to resolve cases where a cast member is sometimes listed with a specific gender
+code (apparently 1 for female and 2 for male) and sometimes with the code 0 for unknown/non-binary.  There are various approaches to
+fixing up the data, but for present purposes I think it's reasonable simply to query for the top 10 by average budget for each gender code
+and to verify that the top-budget actor with `max_gender = 0` (Billy Connolly; interesting) has an "average budget" rating lower than the
+10th-ranked actor of either binary gender.
+
+The query results are given below.  They look basically reasonable to me, and they're not highly sensitive to the exact cut-off for billing
+order.  Changing the threshold from 5 to 10 does conspicuously reduce the plausibility of the query results, though.
+
+(In a real scenario, I might try some alternate metrics -- maybe instead of taking the arithmetic mean budget of all movies in which the actor
+has had high billing, drop some outliers and take the geometric mean of the rest?)
+
+
+```
++-----+------------------+--------------------+-----------+----------+
+|id   |a_name            |avg_budget          |movie_count|max_gender|
++-----+------------------+--------------------+-----------+----------+
+|9188 |Billy Connolly    |6.8375E7            |8          |0         |
+|16940|Jeremy Irons      |5.105555555555555E7 |9          |0         |
+|10400|Barbra Streisand  |5.0666666666666664E7|6          |0         |
+|8930 |John Cleese       |4.805714285714286E7 |7          |0         |
+|5588 |Alicia Silverstone|4.26E7              |5          |0         |
+|73931|Bette Midler      |3.9625E7            |10         |0         |
+|15152|James Earl Jones  |3.55E7              |6          |0         |
+|11514|Catherine O'Hara  |3.4333333333333336E7|9          |0         |
+|3926 |Albert Finney     |3.4E7               |5          |0         |
+|1639 |Emily Watson      |3.2888888888888888E7|9          |0         |
++-----+------------------+--------------------+-----------+----------+
+only showing top 10 rows
+
++-----+--------------------+--------------------+-----------+----------+
+|id   |a_name              |avg_budget          |movie_count|max_gender|
++-----+--------------------+--------------------+-----------+----------+
+|10990|Emma Watson         |1.2255555555555555E8|9          |1         |
+|10912|Eva Green           |1.1462E8            |5          |1         |
+|4730 |Emmy Rossum         |1.03E8              |5          |1         |
+|72129|Jennifer Lawrence   |8.779642857142857E7 |14         |1         |
+|1283 |Helena Bonham Carter|8.209666666666667E7 |15         |1         |
+|11701|Angelina Jolie      |8.136E7             |25         |1         |
+|1245 |Scarlett Johansson  |8.11E7              |23         |1         |
+|4587 |Halle Berry         |8.047058823529412E7 |17         |1         |
+|3910 |Frances McDormand   |7.99090909090909E7  |11         |1         |
+|76070|Mia Wasikowska      |7.87E7              |5          |1         |
++-----+--------------------+--------------------+-----------+----------+
+only showing top 10 rows
+
++-----+----------------+--------------------+-----------+----------+
+|id   |a_name          |avg_budget          |movie_count|max_gender|
++-----+----------------+--------------------+-----------+----------+
+|1327 |Ian McKellen    |1.323076923076923E8 |13         |2         |
+|10989|Rupert Grint    |1.3042857142857143E8|7          |2         |
+|73968|Henry Cavill    |1.29E8              |5          |2         |
+|114  |Orlando Bloom   |1.2354545454545455E8|11         |2         |
+|7060 |Martin Freeman  |1.2214285714285715E8|7          |2         |
+|10980|Daniel Radcliffe|1.2025E8            |8          |2         |
+|60900|Taylor Kitsch   |1.148E8             |5          |2         |
+|1333 |Andy Serkis     |1.145E8             |6          |2         |
+|8784 |Daniel Craig    |1.1203571428571428E8|14         |2         |
+|96066|Liam Hemsworth  |1.1116666666666667E8|6          |2         |
++-----+----------------+--------------------+-----------+----------+
+only showing top 10 rows
+```
+
+
 Code challenge 
 ================
 
