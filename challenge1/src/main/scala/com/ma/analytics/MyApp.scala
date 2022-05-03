@@ -43,6 +43,7 @@ object MyApp {
 
   def main(args:Array[String]) = {
     SparkFactory.loadDailyRatings(".*".r)
+    SparkFactory.updateAvgRatings()
     SparkFactory.updateRatingsGlobalTempView("movies_metadata")
 
     val whereClause = args(0)

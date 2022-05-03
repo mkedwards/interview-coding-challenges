@@ -79,7 +79,7 @@ class IdPartitioner(numberOfPartitions: Int) extends Partitioner {
 }
 
 // SparkFactory may not be the right name for this any more, now that it has grown most of the application function?
-// but this is where the machinery around building RDDs and DataFrames is encapsulated.  It has two public members:
+// but this is where the machinery around building RDDs and DataFrames is encapsulated.  It has three public members:
 //
 //   * loadDailyRatings(regEx) loads the CSV files for all dates that match the given regular expression into RDDs for use
 //     in subsequent calls to updateRatingsGlobalTempView(metadataName).  The set of newly loaded RDDs is merged with the
@@ -88,12 +88,15 @@ class IdPartitioner(numberOfPartitions: Int) extends Partitioner {
 //     and call a notification callback on completion, and that it should be safe to call updateRatingsGlobalTempView()
 //     at any point during this process.
 //
-//   * updateRatingsGlobalTempView(metadataName) regenerates the average ratings DataFrame based on the current set of
-//     daily ratings RDDs, regenerates the lookup (movie metadata) dataframe based on the current CSV (specified by
-//     metadataName), and updates the global temp view based on a (left outer) join of these two DataFrames.  The intention
-//     is that any caching logic for partial roll-ups of daily RDDs, etc. will be encapsulated within the implementation of
-//     updateRatingsGlobalTempView().  Again, this is presently a synchronous, sequential operation, but the design goal is
-//     that we should be able to do these loads concurrently and call a notification callback on completion.
+//   * updateAvgRatings() regenerates the average ratings DataFrame based on the current set of daily ratings RDDs.
+//     The intention is that any caching logic for partial roll-ups of daily RDDs, etc. will be encapsulated within the
+//     implementation of updateAvgRatings().  Again, this is presently a synchronous, sequential operation, but the design
+//     goal is that we should be able to do these loads concurrently and call a notification callback on completion.
+//     Note that this does not take effect for query purposes until the next call to updateRatingsGlobalTempView().
+//
+//   * updateRatingsGlobalTempView(metadataName) regenerates the lookup (movie metadata) DataFrame based on the current CSV
+//     (specified by metadataName), and updates the global temp view based on a (left outer) join of the most recent average
+//     ratings DataFrame and this new movie metadata DataFrame.
 //
 object SparkFactory {
   // TODO Plumb the partitionCount setting through to the SparkFactory constructor
@@ -159,6 +162,12 @@ object SparkFactory {
     new TreeMap[String, RDD[(IdTuple, TimestampedRating)]]()(implicitly[Ordering[String]].reverse)
   ).unsafeRunSync()
 
+  // Similarly, the avgRatings member is a mutable atomic reference to a DataFrame with the appropriate schema, seeded with an empty RDD.
+  //
+  private var avgRatings = Ref[IO].of(
+    spark.createDataFrame(spark.sparkContext.emptyRDD[Row], avgRatingsSchema)
+  ).unsafeRunSync()
+
   // Ingest a (partitioned, compressed) daily CSV file to produce an RDD laid out for efficient union/reduceByKey in avgRatingsDF().
   // Note that RDD.repartitionAndSortWithinPartitions() relies on an implicit Ordering on the key.  Sorting down to the (movie_id, user_id)
   // level during the initial shuffle/partition by movie_id doesn't cost us much, and improves the locality of the later union/reduceByKey
@@ -184,11 +193,10 @@ object SparkFactory {
   }
 
   // loadDailyRatings(regEx) loads the CSV files for all dates that match the given regular expression into RDDs for use
-  // in subsequent calls to updateRatingsGlobalTempView(metadataName).  The set of newly loaded RDDs is merged with the
-  // results of previous calls to loadDailyRatings(), clobbering any existing RDD for a given date.  This is presently
-  // a synchronous, sequential operation, but the design goal is that we should be able to do these loads concurrently
-  // and call a notification callback on completion, and that it should be safe to call updateRatingsGlobalTempView()
-  // at any point during this process.
+  // in subsequent calls to updateAvgRatings().  The set of newly loaded RDDs is merged with the results of previous calls
+  // to loadDailyRatings(), clobbering any existing RDD for a given date.  This is presently a synchronous, sequential operation,
+  // but the design goal is that we should be able to do these loads concurrently and call a notification callback on completion,
+  // and that it should be safe to call updateAvgRatings() at any point during this process.
   //
   def loadDailyRatings(regEx: Regex): Unit = {
     getListOfSubDirectories(new File(basePath + "/ratings"))
@@ -312,19 +320,36 @@ object SparkFactory {
       .persist(StorageLevel.MEMORY_AND_DISK_2)
   }
 
-  // updateRatingsGlobalTempView(metadataName) regenerates the average ratings DataFrame based on the current set of
-  // daily ratings RDDs, regenerates the lookup (movie metadata) dataframe based on the current CSV (specified by
-  // metadataName), and updates the global temp view based on a (left outer) join of these two DataFrames.  The intention
-  // is that any caching logic for partial roll-ups of daily RDDs, etc. will be encapsulated within the implementation of
-  // updateRatingsGlobalTempView().  Again, this is presently a synchronous, sequential operation, but the design goal is
-  // that we should be able to do these loads concurrently and call a notification callback on completion.
+  // updateAvgRatings() regenerates the average ratings DataFrame based on the current set of daily ratings RDDs.
+  // The intention is that any caching logic for partial roll-ups of daily RDDs, etc. will be encapsulated within the
+  // implementation of updateAvgRatings().  Again, this is presently a synchronous, sequential operation, but the design
+  // goal is that we should be able to do these loads concurrently and call a notification callback on completion.
+  // Note that this does not take effect for query purposes until the next call to updateRatingsGlobalTempView().
+  //
+  // Note also that we deliberately don't unpersist the old DataFrame, which may still be in use in concurrent queries.
+  //
+  def updateAvgRatings(): Unit = {
+    val df_avg_ratings = avgRatingsDF()
+    val doUpdate = avgRatings.set(df_avg_ratings)
+    doUpdate.unsafeRunSync()
+    ()
+  }
+
+  // updateRatingsGlobalTempView(metadataName) regenerates the lookup (movie metadata) DataFrame based on the current CSV
+  // (specified by metadataName), and updates the global temp view based on a (left outer) join of the most recent average
+  // ratings DataFrame and this new movie metadata DataFrame.
   //
   // TODO the column order is currently adjusted for display purposes using a brute-force select; rewrite this so that it
   //      doesn't have to know the list of columns present in the metadata file
   //
   def updateRatingsGlobalTempView(metadataName: String): Unit = {
-    val df_avg_ratings = avgRatingsDF()
     val df_movie_lookup = movieLookupDF(metadataName)
+
+    val arEffect = for {
+      ar <- avgRatings.get
+    } yield ar
+    val df_avg_ratings = arEffect.unsafeRunSync()
+
 
     val df_ratings_joined = df_avg_ratings.join(broadcast(df_movie_lookup), df_avg_ratings("movie_id") === df_movie_lookup("movie_id"), "leftouter")
                                           .select(df_avg_ratings("movie_id"),
